@@ -7,14 +7,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/openkcm/common-sdk/pkg/auth"
 	"github.com/stretchr/testify/assert"
 
 	multitenancy "github.com/bartventer/gorm-multitenancy/v8"
 
 	"github.com/openkcm/cmk/internal/api/cmkapi"
 	"github.com/openkcm/cmk/internal/constants"
-	"github.com/openkcm/cmk/internal/model"
 	"github.com/openkcm/cmk/internal/repo/sql"
 	"github.com/openkcm/cmk/internal/testutils"
 	"github.com/openkcm/cmk/utils/ptr"
@@ -23,54 +21,46 @@ import (
 func startAPIGroups(t *testing.T) (*multitenancy.DB, cmkapi.ServeMux, string) {
 	t.Helper()
 
-	db, tenants, _ := testutils.NewTestDB(t, testutils.TestDBConfig{})
+	db, tenants, dbCfg := testutils.NewTestDB(t, testutils.TestDBConfig{})
 
-	r := testutils.NewAPIServer(
-		t, db, testutils.TestAPIServerConfig{
-			Plugins: []testutils.MockPlugin{testutils.IdentityPlugin},
-		},
+	cfg := testutils.TestAPIServerConfig{
+		Plugins: []testutils.MockPlugin{testutils.IdentityPlugin},
+	}
+
+	sv := testutils.NewAPIServer(
+		t, db, cfg, &dbCfg,
 	)
 
-	return db, r, tenants[0]
+	return db, sv, tenants[0]
 }
 
 func TestGetGroups(t *testing.T) {
 	db, r, tenant := startAPIGroups(t)
+	repo := sql.NewRepository(db)
+	ctx := testutils.CreateCtxWithTenant(tenant)
+
+	authClient := testutils.NewAuthClient(ctx, t, repo, testutils.WithTenantAdminRole())
 
 	t.Run("Should code 200 on successful groups get", func(t *testing.T) {
-		// Create a test group first
-		repo := sql.NewRepository(db)
-		group := testutils.NewGroup(
-			func(g *model.Group) {
-				g.IAMIdentifier = "test-group-get"
-			},
-		)
-		err := repo.Create(testutils.CreateCtxWithTenant(tenant), group)
-		assert.NoError(t, err)
-
 		w := testutils.MakeHTTPRequest(
 			t, r, testutils.RequestOptions{
-				Method:   http.MethodGet,
-				Endpoint: "/groups",
-				Tenant:   tenant,
-				AdditionalContext: map[any]any{
-					constants.ClientData: &auth.ClientData{
-						Identifier: "test-user",
-						Groups:     []string{"test-group-get"},
-					},
-				},
+				Method:            http.MethodGet,
+				Endpoint:          "/groups",
+				Tenant:            tenant,
+				AdditionalContext: authClient.GetClientMap(),
 			},
 		)
+
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		var response cmkapi.GroupList
 
-		err = json.Unmarshal(w.Body.Bytes(), &response)
+		err := json.Unmarshal(w.Body.Bytes(), &response)
 		assert.NoError(t, err)
 		assert.Len(t, response.Value, 1)
 	})
 
-	t.Run("Should code 500 on empty groups when no client data", func(t *testing.T) {
+	t.Run("Should code 403 on empty groups when no client data", func(t *testing.T) {
 		w := testutils.MakeHTTPRequest(
 			t, r, testutils.RequestOptions{
 				Method:   http.MethodGet,
@@ -79,11 +69,7 @@ func TestGetGroups(t *testing.T) {
 			},
 		)
 
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		var response cmkapi.GroupList
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Empty(t, 0, len(response.Value))
+		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
 	t.Run("Should code 500 on server failure", func(t *testing.T) {
@@ -94,15 +80,10 @@ func TestGetGroups(t *testing.T) {
 
 		w := testutils.MakeHTTPRequest(
 			t, r, testutils.RequestOptions{
-				Method:   http.MethodGet,
-				Endpoint: "/groups",
-				Tenant:   tenant,
-				AdditionalContext: map[any]any{
-					constants.ClientData: &auth.ClientData{
-						Identifier: "test-user",
-						Groups:     []string{"test-group"},
-					},
-				},
+				Method:            http.MethodGet,
+				Endpoint:          "/groups",
+				Tenant:            tenant,
+				AdditionalContext: authClient.GetClientMap(),
 			},
 		)
 
@@ -111,7 +92,11 @@ func TestGetGroups(t *testing.T) {
 }
 
 func TestPostGroups(t *testing.T) {
-	_, r, tenant := startAPIGroups(t)
+	db, r, tenant := startAPIGroups(t)
+	rep := sql.NewRepository(db)
+	ctx := testutils.CreateCtxWithTenant(tenant)
+
+	authClient := testutils.NewAuthClient(ctx, t, rep, testutils.WithTenantAdminRole())
 
 	t.Run(
 		"Should code 201 on successful group creation", func(t *testing.T) {
@@ -122,10 +107,11 @@ func TestPostGroups(t *testing.T) {
 
 			w := testutils.MakeHTTPRequest(
 				t, r, testutils.RequestOptions{
-					Method:   http.MethodPost,
-					Endpoint: "/groups",
-					Tenant:   tenant,
-					Body:     testutils.WithJSON(t, group),
+					Method:            http.MethodPost,
+					Endpoint:          "/groups",
+					Tenant:            tenant,
+					Body:              testutils.WithJSON(t, group),
+					AdditionalContext: authClient.GetClientMap(),
 				},
 			)
 
@@ -142,10 +128,11 @@ func TestPostGroups(t *testing.T) {
 
 			w := testutils.MakeHTTPRequest(
 				t, r, testutils.RequestOptions{
-					Method:   http.MethodPost,
-					Endpoint: "/groups",
-					Tenant:   tenant,
-					Body:     testutils.WithJSON(t, group),
+					Method:            http.MethodPost,
+					Endpoint:          "/groups",
+					Tenant:            tenant,
+					Body:              testutils.WithJSON(t, group),
+					AdditionalContext: authClient.GetClientMap(),
 				},
 			)
 
@@ -162,10 +149,11 @@ func TestPostGroups(t *testing.T) {
 
 			w := testutils.MakeHTTPRequest(
 				t, r, testutils.RequestOptions{
-					Method:   http.MethodPost,
-					Endpoint: "/groups",
-					Tenant:   tenant,
-					Body:     testutils.WithJSON(t, group),
+					Method:            http.MethodPost,
+					Endpoint:          "/groups",
+					Tenant:            tenant,
+					Body:              testutils.WithJSON(t, group),
+					AdditionalContext: authClient.GetClientMap(),
 				},
 			)
 
@@ -182,10 +170,11 @@ func TestPostGroups(t *testing.T) {
 
 			w := testutils.MakeHTTPRequest(
 				t, r, testutils.RequestOptions{
-					Method:   http.MethodPost,
-					Endpoint: "/groups",
-					Tenant:   tenant,
-					Body:     testutils.WithJSON(t, group),
+					Method:            http.MethodPost,
+					Endpoint:          "/groups",
+					Tenant:            tenant,
+					Body:              testutils.WithJSON(t, group),
+					AdditionalContext: authClient.GetClientMap(),
 				},
 			)
 
@@ -197,9 +186,10 @@ func TestPostGroups(t *testing.T) {
 		"Should code 400 on create group with invalid body", func(t *testing.T) {
 			w := testutils.MakeHTTPRequest(
 				t, r, testutils.RequestOptions{
-					Method:   http.MethodPost,
-					Endpoint: "/groups",
-					Tenant:   tenant,
+					Method:            http.MethodPost,
+					Endpoint:          "/groups",
+					Tenant:            tenant,
+					AdditionalContext: authClient.GetClientMap(),
 				},
 			)
 
@@ -210,54 +200,23 @@ func TestPostGroups(t *testing.T) {
 
 func TestDeleteGroup(t *testing.T) {
 	db, r, tenant := startAPIGroups(t)
+	repo := sql.NewRepository(db)
+	ctx := testutils.CreateCtxWithTenant(tenant)
+
+	authClient := testutils.NewAuthClient(ctx, t, repo, testutils.WithTenantAdminRole())
 
 	t.Run(
 		"Should code 204 on successful group delete", func(t *testing.T) {
-			group := testutils.NewGroup(
-				func(g *model.Group) {
-					g.IAMIdentifier = "test-group-delete"
-				},
-			)
-
-			repo := sql.NewRepository(db)
-			err := repo.Create(testutils.CreateCtxWithTenant(tenant), group)
-			assert.NoError(t, err)
-
 			w := testutils.MakeHTTPRequest(
 				t, r, testutils.RequestOptions{
-					Method:   http.MethodDelete,
-					Endpoint: fmt.Sprintf("/groups/%s", group.ID),
-					Tenant:   tenant,
-					AdditionalContext: map[any]any{
-						constants.ClientData: &auth.ClientData{
-							Identifier: "test-user",
-							Groups:     []string{"test-group-delete"},
-						},
-					},
+					Method:            http.MethodDelete,
+					Endpoint:          "/groups/" + authClient.GroupID,
+					Tenant:            tenant,
+					AdditionalContext: authClient.GetClientMap(),
 				},
 			)
 
 			assert.Equal(t, http.StatusNoContent, w.Code)
-		},
-	)
-
-	t.Run(
-		"Should code 404 on non-existing group delete", func(t *testing.T) {
-			w := testutils.MakeHTTPRequest(
-				t, r, testutils.RequestOptions{
-					Method:   http.MethodDelete,
-					Endpoint: fmt.Sprintf("/groups/%s", uuid.New()),
-					Tenant:   tenant,
-					AdditionalContext: map[any]any{
-						constants.ClientData: &auth.ClientData{
-							Identifier: "test-user",
-							Groups:     []string{"test-group"},
-						},
-					},
-				},
-			)
-
-			assert.Equal(t, http.StatusNotFound, w.Code)
 		},
 	)
 
@@ -276,6 +235,21 @@ func TestDeleteGroup(t *testing.T) {
 	)
 
 	t.Run(
+		"Should code 404 on non-existing group delete", func(t *testing.T) {
+			w := testutils.MakeHTTPRequest(
+				t, r, testutils.RequestOptions{
+					Method:            http.MethodDelete,
+					Endpoint:          fmt.Sprintf("/groups/%s", uuid.New()),
+					Tenant:            tenant,
+					AdditionalContext: authClient.GetClientMap(),
+				},
+			)
+
+			assert.Equal(t, http.StatusNotFound, w.Code)
+		},
+	)
+
+	t.Run(
 		"Should code 500 on server fail", func(t *testing.T) {
 			forced := testutils.NewDBErrorForced(db, ErrForced)
 
@@ -284,48 +258,32 @@ func TestDeleteGroup(t *testing.T) {
 
 			w := testutils.MakeHTTPRequest(
 				t, r, testutils.RequestOptions{
-					Method:   http.MethodDelete,
-					Endpoint: fmt.Sprintf("/groups/%s", uuid.New()),
-					Tenant:   tenant,
-					AdditionalContext: map[any]any{
-						constants.ClientData: &auth.ClientData{
-							Identifier: "test-user",
-							Groups:     []string{"test-group"},
-						},
-					},
+					Method:            http.MethodDelete,
+					Endpoint:          fmt.Sprintf("/groups/%s", uuid.New()),
+					Tenant:            tenant,
+					AdditionalContext: authClient.GetClientMap(),
 				},
 			)
 
 			assert.Equal(t, http.StatusInternalServerError, w.Code)
-		},
-	)
+		})
+
 }
 
 func TestGetGroupID(t *testing.T) {
 	db, r, tenant := startAPIGroups(t)
+	rep := sql.NewRepository(db)
+	ctx := testutils.CreateCtxWithTenant(tenant)
+
+	authClient := testutils.NewAuthClient(ctx, t, rep, testutils.WithAuditorRole())
 
 	t.Run("Should code 200 successful get", func(t *testing.T) {
-		group := testutils.NewGroup(
-			func(g *model.Group) {
-				g.IAMIdentifier = "test-group-getid"
-			},
-		)
-
-		repo := sql.NewRepository(db)
-		err := repo.Create(testutils.CreateCtxWithTenant(tenant), group)
-		assert.NoError(t, err)
-
 		w := testutils.MakeHTTPRequest(
 			t, r, testutils.RequestOptions{
-				Method:   http.MethodGet,
-				Endpoint: fmt.Sprintf("/groups/%s", group.ID),
-				Tenant:   tenant,
-				AdditionalContext: map[any]any{
-					constants.ClientData: &auth.ClientData{
-						Identifier: "test-user",
-						Groups:     []string{"test-group-getid"},
-					},
-				},
+				Method:            http.MethodGet,
+				Endpoint:          fmt.Sprintf("/groups/%s", authClient.Group.ID),
+				Tenant:            tenant,
+				AdditionalContext: authClient.GetClientMap(),
 			},
 		)
 
@@ -347,22 +305,17 @@ func TestGetGroupID(t *testing.T) {
 	t.Run("Should code 404 on non existing group", func(t *testing.T) {
 		w := testutils.MakeHTTPRequest(
 			t, r, testutils.RequestOptions{
-				Method:   http.MethodGet,
-				Endpoint: fmt.Sprintf("/groups/%s", uuid.New()),
-				Tenant:   tenant,
-				AdditionalContext: map[any]any{
-					constants.ClientData: &auth.ClientData{
-						Identifier: "test-user",
-						Groups:     []string{"test-group"},
-					},
-				},
+				Method:            http.MethodGet,
+				Endpoint:          fmt.Sprintf("/groups/%s", uuid.New()),
+				Tenant:            tenant,
+				AdditionalContext: authClient.GetClientMap(),
 			},
 		)
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
-	t.Run("Should code 500 on server fail", func(t *testing.T) {
+	t.Run("Should code 500 on server failure", func(t *testing.T) {
 		forced := testutils.NewDBErrorForced(db, ErrForced)
 
 		forced.Register()
@@ -370,85 +323,56 @@ func TestGetGroupID(t *testing.T) {
 
 		w := testutils.MakeHTTPRequest(
 			t, r, testutils.RequestOptions{
-				Method:   http.MethodGet,
-				Endpoint: fmt.Sprintf("/groups/%s", uuid.New()),
-				Tenant:   tenant,
-				AdditionalContext: map[any]any{
-					constants.ClientData: &auth.ClientData{
-						Identifier: "test-user",
-						Groups:     []string{"test-group"},
-					},
-				},
+				Method:            http.MethodGet,
+				Endpoint:          fmt.Sprintf("/groups/%s", uuid.New()),
+				Tenant:            tenant,
+				AdditionalContext: authClient.GetClientMap(),
 			},
 		)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
+
 }
 
 func TestUpdateGroup(t *testing.T) {
 	db, r, tenant := startAPIGroups(t)
+	repo := sql.NewRepository(db)
+	ctx := testutils.CreateCtxWithTenant(tenant)
 
-	rep := sql.NewRepository(db)
+	authClientTA1 := testutils.NewAuthClient(ctx, t, repo, testutils.WithTenantAdminRole())
+	authClientTA2 := testutils.NewAuthClient(ctx, t, repo, testutils.WithTenantAdminRole())
 
-	t.Run(
-		"Should code 200 on successful group rename", func(t *testing.T) {
-			testGroup := testutils.NewGroup(
-				func(g *model.Group) {
-					g.IAMIdentifier = "test-group-rename"
-				},
-			)
-			err := rep.Create(testutils.CreateCtxWithTenant(tenant), testGroup)
-			assert.NoError(t, err)
+	t.Run("Should code 200 on successful group rename", func(t *testing.T) {
+		updateGroup := cmkapi.GroupPatch{
+			Name: ptr.PointTo("test"),
+		}
 
-			updateGroup := cmkapi.GroupPatch{
-				Name: ptr.PointTo("test"),
-			}
+		w := testutils.MakeHTTPRequest(
+			t, r, testutils.RequestOptions{
+				Method:            http.MethodPatch,
+				Endpoint:          "/groups/" + authClientTA1.GroupID,
+				Tenant:            tenant,
+				Body:              testutils.WithJSON(t, updateGroup),
+				AdditionalContext: authClientTA1.GetClientMap(),
+			},
+		)
 
-			w := testutils.MakeHTTPRequest(
-				t, r, testutils.RequestOptions{
-					Method:   http.MethodPatch,
-					Endpoint: fmt.Sprintf("/groups/%s", testGroup.ID),
-					Tenant:   tenant,
-					Body:     testutils.WithJSON(t, updateGroup),
-					AdditionalContext: map[any]any{
-						constants.ClientData: &auth.ClientData{
-							Identifier: "test-user",
-							Groups:     []string{"test-group-rename"},
-						},
-					},
-				},
-			)
-
-			assert.Equal(t, http.StatusOK, w.Code)
-		},
-	)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
 
 	t.Run(
 		"Should code 400 on invalid group rename object", func(t *testing.T) {
-			testGroup := testutils.NewGroup(
-				func(g *model.Group) {
-					g.IAMIdentifier = "test-group-invalid-rename"
-				},
-			)
-			err := rep.Create(testutils.CreateCtxWithTenant(tenant), testGroup)
-			assert.NoError(t, err)
-
 			updateGroup := cmkapi.GroupPatch{
 				Name: ptr.PointTo(""),
 			}
 			w := testutils.MakeHTTPRequest(
 				t, r, testutils.RequestOptions{
-					Method:   http.MethodPatch,
-					Endpoint: fmt.Sprintf("/groups/%s", testGroup.ID),
-					Tenant:   tenant,
-					Body:     testutils.WithJSON(t, updateGroup),
-					AdditionalContext: map[any]any{
-						constants.ClientData: &auth.ClientData{
-							Identifier: "test-user",
-							Groups:     []string{"test-group-invalid-rename"},
-						},
-					},
+					Method:            http.MethodPatch,
+					Endpoint:          fmt.Sprintf("/groups/%s", authClientTA1.GroupID),
+					Tenant:            tenant,
+					Body:              testutils.WithJSON(t, updateGroup),
+					AdditionalContext: authClientTA1.GetClientMap(),
 				},
 			)
 
@@ -458,30 +382,17 @@ func TestUpdateGroup(t *testing.T) {
 
 	t.Run(
 		"Should code 400 on rename to protect group name", func(t *testing.T) {
-			testGroup := testutils.NewGroup(
-				func(g *model.Group) {
-					g.IAMIdentifier = "test-group-protected-rename"
-				},
-			)
-			err := rep.Create(testutils.CreateCtxWithTenant(tenant), testGroup)
-			assert.NoError(t, err)
-
 			updateGroup := cmkapi.GroupPatch{
 				Name: ptr.PointTo(constants.TenantAdminGroup),
 			}
 
 			w := testutils.MakeHTTPRequest(
 				t, r, testutils.RequestOptions{
-					Method:   http.MethodPatch,
-					Endpoint: fmt.Sprintf("/groups/%s", testGroup.ID),
-					Tenant:   tenant,
-					Body:     testutils.WithJSON(t, updateGroup),
-					AdditionalContext: map[any]any{
-						constants.ClientData: &auth.ClientData{
-							Identifier: "test-user",
-							Groups:     []string{"test-group-protected-rename"},
-						},
-					},
+					Method:            http.MethodPatch,
+					Endpoint:          fmt.Sprintf("/groups/%s", authClientTA2.GroupID),
+					Tenant:            tenant,
+					Body:              testutils.WithJSON(t, updateGroup),
+					AdditionalContext: authClientTA2.GetClientMap(),
 				},
 			)
 
@@ -497,16 +408,11 @@ func TestUpdateGroup(t *testing.T) {
 
 			w := testutils.MakeHTTPRequest(
 				t, r, testutils.RequestOptions{
-					Method:   http.MethodPatch,
-					Endpoint: fmt.Sprintf("/groups/%s", uuid.New()),
-					Tenant:   tenant,
-					Body:     testutils.WithJSON(t, updateGroup),
-					AdditionalContext: map[any]any{
-						constants.ClientData: &auth.ClientData{
-							Identifier: "test-user",
-							Groups:     []string{"test-group"},
-						},
-					},
+					Method:            http.MethodPatch,
+					Endpoint:          fmt.Sprintf("/groups/%s", uuid.New()),
+					Tenant:            tenant,
+					Body:              testutils.WithJSON(t, updateGroup),
+					AdditionalContext: authClientTA1.GetClientMap(),
 				},
 			)
 
@@ -515,15 +421,7 @@ func TestUpdateGroup(t *testing.T) {
 	)
 
 	t.Run(
-		"Should code 500 on server error", func(t *testing.T) {
-			testGroup := testutils.NewGroup(
-				func(g *model.Group) {
-					g.IAMIdentifier = "test-group-server-error"
-				},
-			)
-			err := rep.Create(testutils.CreateCtxWithTenant(tenant), testGroup)
-			assert.NoError(t, err)
-
+		"Should code 500 on server failure", func(t *testing.T) {
 			forced := testutils.NewDBErrorForced(db, ErrForced)
 
 			forced.Register()
@@ -535,26 +433,25 @@ func TestUpdateGroup(t *testing.T) {
 
 			w := testutils.MakeHTTPRequest(
 				t, r, testutils.RequestOptions{
-					Method:   http.MethodPatch,
-					Endpoint: fmt.Sprintf("/groups/%s", testGroup.ID),
-					Tenant:   tenant,
-					AdditionalContext: map[any]any{
-						constants.ClientData: &auth.ClientData{
-							Identifier: "test-user",
-							Groups:     []string{"test-group-server-error"},
-						},
-					},
-					Body: testutils.WithJSON(t, updateGroup),
+					Method:            http.MethodPatch,
+					Endpoint:          fmt.Sprintf("/groups/%s", authClientTA1.GroupID),
+					Tenant:            tenant,
+					Body:              testutils.WithJSON(t, updateGroup),
+					AdditionalContext: authClientTA1.GetClientMap(),
 				},
 			)
 
 			assert.Equal(t, http.StatusInternalServerError, w.Code)
-		},
-	)
+		})
 }
 
 func TestCheckGroupsIAM(t *testing.T) {
-	_, r, tenant := startAPIGroups(t)
+	db, sv, tenant := startAPIGroups(t)
+	r := sql.NewRepository(db)
+
+	ctx := testutils.CreateCtxWithTenant(tenant)
+
+	authClient := testutils.NewAuthClient(ctx, t, r, testutils.WithAuditorRole())
 
 	t.Run(
 		"returns correct response on success", func(t *testing.T) {
@@ -562,17 +459,12 @@ func TestCheckGroupsIAM(t *testing.T) {
 				IamIdentifiers: []string{"KMS_001", "KMS_002", "KMS_999"},
 			}
 			w := testutils.MakeHTTPRequest(
-				t, r, testutils.RequestOptions{
-					Method:   http.MethodPost,
-					Endpoint: "/groups/iamCheck",
-					Tenant:   tenant,
-					Body:     testutils.WithJSON(t, body),
-					AdditionalContext: map[any]any{
-						constants.ClientData: &auth.ClientData{
-							Identifier: "test-user",
-							Groups:     []string{"KMS_001", "KMS_002", "KMS_003"},
-						},
-					},
+				t, sv, testutils.RequestOptions{
+					Method:            http.MethodPost,
+					Endpoint:          "/groups/iamCheck",
+					Tenant:            tenant,
+					Body:              testutils.WithJSON(t, body),
+					AdditionalContext: authClient.GetClientMap(),
 				},
 			)
 			assert.Equal(t, http.StatusOK, w.Code)
