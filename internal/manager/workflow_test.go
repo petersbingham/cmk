@@ -518,7 +518,7 @@ func TestWorkflowManager_TransitionWorkflow(t *testing.T) {
 			)
 			assert.NoError(t, err)
 
-			ctx = cmkcontext.InjectClientData(
+			ctx = cmkcontext.InjectBusinessClientData(
 				cmkcontext.CreateTenantContext(t.Context(), tenant),
 				&auth.ClientData{
 					Identifier: wf.InitiatorID,
@@ -548,7 +548,7 @@ func TestWorkflowManager_TransitionWorkflow(t *testing.T) {
 				),
 			)
 			assert.NoError(t, err)
-			ctx = cmkcontext.InjectClientData(
+			ctx = cmkcontext.InjectBusinessClientData(
 				cmkcontext.CreateTenantContext(t.Context(), tenant),
 				&auth.ClientData{
 					Identifier: wf.Approvers[0].UserID,
@@ -579,7 +579,7 @@ func TestWorkflowManager_TransitionWorkflow(t *testing.T) {
 				),
 			)
 			assert.NoError(t, err)
-			ctx = cmkcontext.InjectClientData(
+			ctx = cmkcontext.InjectBusinessClientData(
 				cmkcontext.CreateTenantContext(t.Context(), tenant),
 				&auth.ClientData{
 					Identifier: wf.Approvers[0].UserID,
@@ -636,7 +636,7 @@ func TestWorkflowManager_GetWorkflowByID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				ctx := cmkcontext.InjectClientData(
+				ctx := cmkcontext.InjectBusinessClientData(
 					cmkcontext.CreateTenantContext(t.Context(), tenant),
 					&auth.ClientData{
 						Identifier: userID,
@@ -879,7 +879,7 @@ func TestWorkfowManager_GetWorkflows(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(
 			tc.name, func(t *testing.T) {
-				ctx := cmkcontext.InjectClientData(
+				ctx := cmkcontext.InjectBusinessClientData(
 					cmkcontext.CreateTenantContext(t.Context(), tenant),
 					&auth.ClientData{
 						Identifier: userID,
@@ -924,7 +924,7 @@ func TestWorkfowManager_GetWorkflows(t *testing.T) {
 	}
 
 	t.Run("Should return workflows ordered by created time descending", func(t *testing.T) {
-		ctx := cmkcontext.InjectClientData(
+		ctx := cmkcontext.InjectBusinessClientData(
 			cmkcontext.CreateTenantContext(t.Context(), tenant),
 			&auth.ClientData{
 				Identifier: userID,
@@ -1411,7 +1411,7 @@ func TestWorkflowManager_CleanupTerminalWorkflows(t *testing.T) {
 
 	userID := uuid.NewString()
 
-	ctx := cmkcontext.InjectClientData(
+	ctx := cmkcontext.InjectBusinessClientData(
 		cmkcontext.CreateTenantContext(t.Context(), tenantID),
 		&auth.ClientData{
 			Identifier: userID,

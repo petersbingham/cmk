@@ -44,7 +44,7 @@ func SetupProbeTest(t *testing.T) (*manager.GroupManager, *manager.TenantManager
 		Database: cfgDB,
 	}
 
-	svcRegistry, err := cmkpluginregistry.New(t.Context(), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
+	svcRegistry, err := cmkpluginregistry.New(createContext(t), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
 	assert.NoError(t, err)
 
 	tm, gm := createManagers(t, db, cfg, svcRegistry)
@@ -53,7 +53,7 @@ func SetupProbeTest(t *testing.T) (*manager.GroupManager, *manager.TenantManager
 }
 
 func TestTenantProbe_Check(t *testing.T) {
-	ctx := t.Context()
+	ctx := createContext(t)
 	gm, tm, multitenancyDB, _ := SetupProbeTest(t)
 
 	tenantID1 := uuid.NewString()
@@ -162,7 +162,7 @@ func TestTenantProbe_Check(t *testing.T) {
 }
 
 func TestCheckTenantSchemaExistenceStatus(t *testing.T) {
-	ctx := t.Context()
+	ctx := createContext(t)
 	_, tm, multitenancyDB, _ := SetupProbeTest(t)
 
 	tenantID := uuid.NewString()
@@ -221,7 +221,8 @@ func TestCheckTenantSchemaExistenceStatus(t *testing.T) {
 }
 
 func TestCheckTenantGroupsExistenceStatus(t *testing.T) {
-	ctx := t.Context()
+	ctx := createContext(t)
+	ctx = cmkcontext.InjectInternalClientData(ctx, constants.InternalTenantProvisioningRole)
 	gm, tm, _, repository := SetupProbeTest(t)
 	tenantID1 := uuid.NewString()
 	tenantID2 := uuid.NewString()
@@ -291,7 +292,7 @@ func TestCheckTenantGroupsExistenceStatus(t *testing.T) {
 }
 
 func TestSchemaExists(t *testing.T) {
-	ctx := t.Context()
+	ctx := createContext(t)
 	_, tm, multitenancyDB, _ := SetupProbeTest(t)
 
 	tenantID := uuid.NewString()
@@ -356,7 +357,9 @@ func TestSchemaExists(t *testing.T) {
 }
 
 func TestGroupExists(t *testing.T) {
-	ctx := t.Context()
+	ctx := createContext(t)
+	ctx = cmkcontext.InjectInternalClientData(ctx, constants.InternalTenantProvisioningRole)
+
 	gm, tm, _, repository := SetupProbeTest(t)
 
 	tenantID1 := uuid.NewString()

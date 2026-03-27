@@ -39,7 +39,7 @@ type User interface {
 		action authz.APIAction,
 		keyConfig *model.KeyConfiguration,
 	) (bool, error)
-	GetRoleFromIAM(ctx context.Context, iamIdentifiers []string) (constants.Role, error)
+	GetRoleFromIAM(ctx context.Context, iamIdentifiers []string) (constants.BusinessRole, error)
 	GetUserInfo(ctx context.Context) (UserInfo, error)
 	NeedsGroupFiltering(
 		ctx context.Context,
@@ -255,7 +255,7 @@ func (u *user) HasTenantAccess(ctx context.Context) (bool, error) {
 	return count > 0, nil
 }
 
-func (u *user) GetRoleFromIAM(ctx context.Context, iamIdentifiers []string) (constants.Role, error) {
+func (u *user) GetRoleFromIAM(ctx context.Context, iamIdentifiers []string) (constants.BusinessRole, error) {
 	ck := repo.NewCompositeKey().Where(repo.IAMIdField, iamIdentifiers)
 
 	var groups []model.Group
@@ -272,7 +272,7 @@ func (u *user) GetRoleFromIAM(ctx context.Context, iamIdentifiers []string) (con
 		return "", nil
 	}
 
-	roleMap := map[constants.Role]bool{}
+	roleMap := map[constants.BusinessRole]bool{}
 	for _, group := range groups {
 		roleMap[group.Role] = true
 	}

@@ -18,6 +18,7 @@ var (
 	ErrGetRequestID                 = errors.New("no requestID found in context")
 	ErrExtractClientData            = errors.New("could not extract client data from context")
 	ErrExtractClientDataAuthContext = errors.New("could not extract field from client data auth context")
+	ErrExtractSource                = errors.New("could not extract source from context")
 )
 
 type Opt func(ctx context.Context) context.Context
@@ -77,7 +78,7 @@ func GetRequestID(ctx context.Context) (string, error) {
 	return requestID, nil
 }
 
-func InjectClientData(
+func InjectBusinessClientData(
 	ctx context.Context,
 	clientData *auth.ClientData,
 	authContextFields []string,
@@ -91,14 +92,15 @@ func InjectClientData(
 	}
 
 	clientData.AuthContext = filteredAuthCtx
+	ctx = context.WithValue(ctx, constants.Source, constants.BusinessSource)
 	ctx = context.WithValue(ctx, constants.ClientData, clientData)
 
 	return ctx
 }
 
-func WithInjectClientData(clientData *auth.ClientData, authContextFields []string) Opt {
+func WithInjectBusinessClientData(clientData *auth.ClientData, authContextFields []string) Opt {
 	return func(ctx context.Context) context.Context {
-		return InjectClientData(ctx, clientData, authContextFields)
+		return InjectBusinessClientData(ctx, clientData, authContextFields)
 	}
 }
 
@@ -166,6 +168,35 @@ func ExtractClientDataAuthContext(ctx context.Context) (map[string]string, error
 	authContext := maps.Clone(clientData.AuthContext)
 
 	return authContext, nil
+}
+
+func InjectInternalClientData(
+	ctx context.Context,
+	role constants.InternalRole,
+) context.Context {
+	ctx = InjectRequestID(ctx, uuid.NewString())
+	ctx = context.WithValue(ctx, constants.Source, constants.InternalSource)
+	ctx = context.WithValue(ctx, constants.InternalData, role)
+
+	return ctx
+}
+
+func ExtractInternalRole(ctx context.Context) (constants.InternalRole, error) {
+	internalRole, ok := ctx.Value(constants.InternalData).(constants.InternalRole)
+	if !ok || internalRole == "" {
+		return "", ErrExtractClientData
+	}
+
+	return internalRole, nil
+}
+
+func ExtractSource(ctx context.Context) (string, error) {
+	source, ok := ctx.Value(constants.Source).(constants.SourceValue)
+	if !ok || source == "" {
+		return "", ErrExtractSource
+	}
+
+	return string(source), nil
 }
 
 func IsSystemUser(ctx context.Context) bool {

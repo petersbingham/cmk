@@ -20,6 +20,8 @@ import (
 	"github.com/samber/oops"
 
 	"github.com/openkcm/cmk/internal/auditor"
+	authz_loader "github.com/openkcm/cmk/internal/authz/loader"
+	authz_repo "github.com/openkcm/cmk/internal/authz/repo"
 	"github.com/openkcm/cmk/internal/clients"
 	"github.com/openkcm/cmk/internal/config"
 	"github.com/openkcm/cmk/internal/db"
@@ -94,9 +96,16 @@ func run(ctx context.Context, cfg *config.Config) error {
 
 	r := sql.NewRepository(dbConn)
 
+	authzRepoLoader := authz_loader.NewRepoAuthzLoader(ctx, r, cfg)
+	if authzRepoLoader.AuthzHandler == nil {
+		return err
+	}
+
+	authzRepo := authz_repo.NewAuthzRepo(r, authzRepoLoader)
+
 	tenantManager, err := createTenantManager(
 		ctx,
-		r,
+		authzRepo,
 		clients,
 		svcRegistry,
 		cfg,
@@ -105,7 +114,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	groupManager := manager.NewGroupManager(r, svcRegistry, manager.NewUserManager(r, auditor.New(ctx, cfg)))
+	groupManager := manager.NewGroupManager(authzRepo, svcRegistry, manager.NewUserManager(r, auditor.New(ctx, cfg)))
 
 	operator, err := operator.NewTenantOperator(dbConn, target, clients, tenantManager, groupManager)
 	if err != nil {

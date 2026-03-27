@@ -27,9 +27,12 @@ import (
 	slogctx "github.com/veqryn/slog-context"
 
 	"github.com/openkcm/cmk/internal/auditor"
+	authz_loader "github.com/openkcm/cmk/internal/authz/loader"
+	authz_repo "github.com/openkcm/cmk/internal/authz/repo"
 	"github.com/openkcm/cmk/internal/clients"
 	"github.com/openkcm/cmk/internal/clients/registry/tenants"
 	"github.com/openkcm/cmk/internal/config"
+	"github.com/openkcm/cmk/internal/constants"
 	"github.com/openkcm/cmk/internal/db"
 	"github.com/openkcm/cmk/internal/manager"
 	"github.com/openkcm/cmk/internal/model"
@@ -76,6 +79,11 @@ func (m *MockTenantManager) DeleteTenant(ctx context.Context) error {
 	return m.mockDeleteTenant(ctx)
 }
 
+func createContext(t *testing.T) context.Context {
+	ctx := t.Context()
+	return cmkcontext.InjectInternalClientData(ctx, constants.InternalTenantProvisioningRole)
+}
+
 func createManagers(
 	t *testing.T,
 	dbCon *multitenancy.DB,
@@ -85,21 +93,28 @@ func createManagers(
 	t.Helper()
 
 	r := sql.NewRepository(dbCon)
-	ctx := t.Context()
+
+	ctx := createContext(t)
+	ctx = cmkcontext.InjectInternalClientData(ctx, constants.InternalTenantProvisioningRole)
+
+	authzRepoLoader := authz_loader.NewRepoAuthzLoader(ctx, r, cfg)
+	assert.NotNil(t, authzRepoLoader.AuthzHandler)
+
+	authzRepo := authz_repo.NewAuthzRepo(r, authzRepoLoader)
 
 	cmkAuditor := auditor.New(ctx, cfg)
 
 	f, err := clients.NewFactory(config.Services{})
 	assert.NoError(t, err)
 
-	cm := manager.NewCertificateManager(ctx, r, svcRegistry, cfg)
-	um := manager.NewUserManager(r, cmkAuditor)
-	tagm := manager.NewTagManager(r)
-	kcm := manager.NewKeyConfigManager(r, cm, um, tagm, cmkAuditor, cfg)
+	cm := manager.NewCertificateManager(ctx, authzRepo, svcRegistry, cfg)
+	um := manager.NewUserManager(authzRepo, cmkAuditor)
+	tagm := manager.NewTagManager(authzRepo)
+	kcm := manager.NewKeyConfigManager(authzRepo, cm, um, tagm, cmkAuditor, cfg)
 
 	sys := manager.NewSystemManager(
 		ctx,
-		r,
+		authzRepo,
 		f,
 		nil,
 		svcRegistry,
@@ -109,7 +124,7 @@ func createManagers(
 	)
 
 	km := manager.NewKeyManager(
-		r,
+		authzRepo,
 		svcRegistry,
 		manager.NewTenantConfigManager(r, svcRegistry, nil),
 		kcm,
@@ -122,7 +137,8 @@ func createManagers(
 	migrator, err := db.NewMigrator(r, cfg)
 	assert.NoError(t, err)
 
-	return manager.NewTenantManager(r, sys, km, um, cmkAuditor, migrator), manager.NewGroupManager(r, svcRegistry, um)
+	return manager.NewTenantManager(authzRepo, sys, km, um, cmkAuditor, migrator),
+		manager.NewGroupManager(authzRepo, svcRegistry, um)
 }
 
 func createInvalidOperatorRequest(
@@ -150,7 +166,7 @@ func createInvalidOperatorRequest(
 	require.NoError(t, err)
 
 	go func() {
-		err = op.RunOperator(t.Context())
+		err = op.RunOperator(createContext(t))
 		assert.NoError(t, err)
 	}()
 
@@ -192,7 +208,7 @@ func TestNewTenantOperator(t *testing.T) {
 		sessionmanager.NewMockService(sessionmanager.NewFakeSessionManagerClient()),
 	)
 
-	svcRegistry, err := cmkpluginregistry.New(t.Context(), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
+	svcRegistry, err := cmkpluginregistry.New(createContext(t), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
 	assert.NoError(t, err)
 
 	tenantManager, groupManager := createManagers(t, dbConn, cfg, svcRegistry)
@@ -234,7 +250,7 @@ func TestNewTenantOperator(t *testing.T) {
 func TestRunOperator(t *testing.T) {
 	testConfig := newTestOperator(t)
 
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(createContext(t))
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -257,7 +273,7 @@ func TestRunOperator(t *testing.T) {
 
 func TestHandleCreateTenant(t *testing.T) {
 	// Initialize TenantOperator
-	ctx := t.Context()
+	ctx := createContext(t)
 	testConfig := newTestOperator(t)
 
 	validTenantID := uuid.NewString()
@@ -363,7 +379,7 @@ func TestHandleCreateTenant(t *testing.T) {
 }
 
 func TestHandleCreateTenantConcurrent(t *testing.T) {
-	ctx := t.Context()
+	ctx := createContext(t)
 	handler := slogctx.NewHandler(
 		slog.NewTextHandler(
 			os.Stdout, &slog.HandlerOptions{
@@ -493,7 +509,7 @@ func TestHandleApplyAuth_InvalidData(t *testing.T) {
 				require.NoError(t, err)
 
 				go func() {
-					err = op.RunOperator(t.Context())
+					err = op.RunOperator(createContext(t))
 					assert.NoError(t, err)
 				}()
 
@@ -538,7 +554,7 @@ func TestHandleApplyAuth_IssuerUpdate(t *testing.T) {
 			require.NoError(t, err)
 
 			go func() {
-				err = op.RunOperator(t.Context())
+				err = op.RunOperator(createContext(t))
 				assert.NoError(t, err)
 			}()
 
@@ -633,7 +649,7 @@ func TestHandleApplyAuth_SessionManagerResponse(t *testing.T) {
 				require.NoError(t, err)
 
 				go func() {
-					err = op.RunOperator(t.Context())
+					err = op.RunOperator(createContext(t))
 					assert.NoError(t, err)
 				}()
 
@@ -687,7 +703,7 @@ func TestHandleApplyAuth_SessionManagerResponse(t *testing.T) {
 				tenant := &model.Tenant{
 					ID: auth.GetTenantId(),
 				}
-				success, err := r.First(t.Context(), tenant, *repo.NewQuery())
+				success, err := r.First(createContext(t), tenant, *repo.NewQuery())
 				assert.NoError(t, err)
 				assert.True(t, success)
 
@@ -715,7 +731,7 @@ func TestHandleBlockTenant(t *testing.T) {
 		Database: testutils.TestDB,
 	}
 
-	svcRegistry, err := cmkpluginregistry.New(t.Context(), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
+	svcRegistry, err := cmkpluginregistry.New(createContext(t), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
 	assert.NoError(t, err)
 
 	tenantManager, groupManager := createManagers(t, unusedDB, cfg, svcRegistry)
@@ -792,7 +808,7 @@ func TestHandleBlockTenant(t *testing.T) {
 			require.NoError(t, err)
 
 			go func() {
-				err = op.RunOperator(t.Context())
+				err = op.RunOperator(createContext(t))
 				assert.NoError(t, err)
 			}()
 
@@ -845,7 +861,7 @@ func TestHandleUnblockTenant(t *testing.T) {
 		Database: testutils.TestDB,
 	}
 
-	svcRegistry, err := cmkpluginregistry.New(t.Context(), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
+	svcRegistry, err := cmkpluginregistry.New(createContext(t), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
 	assert.NoError(t, err)
 
 	tenantManager, groupManager := createManagers(t, unusedDB, cfg, svcRegistry)
@@ -922,7 +938,7 @@ func TestHandleUnblockTenant(t *testing.T) {
 			require.NoError(t, err)
 
 			go func() {
-				err = op.RunOperator(t.Context())
+				err = op.RunOperator(createContext(t))
 				assert.NoError(t, err)
 			}()
 
@@ -972,7 +988,7 @@ func TestHandleTerminateTenant_RemoveAuth(t *testing.T) {
 		Database: testutils.TestDB,
 	}
 
-	svcRegistry, err := cmkpluginregistry.New(t.Context(), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
+	svcRegistry, err := cmkpluginregistry.New(createContext(t), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
 	assert.NoError(t, err)
 
 	_, groupManager := createManagers(t, unusedDB, cfg, svcRegistry)
@@ -1046,7 +1062,7 @@ func TestHandleTerminateTenant_RemoveAuth(t *testing.T) {
 			require.NoError(t, err)
 
 			go func() {
-				err = op.RunOperator(t.Context())
+				err = op.RunOperator(createContext(t))
 				assert.NoError(t, err)
 			}()
 
@@ -1100,7 +1116,7 @@ func TestHandleTerminateTenant(t *testing.T) {
 		Database: testutils.TestDB,
 	}
 
-	svcRegistry, err := cmkpluginregistry.New(t.Context(), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
+	svcRegistry, err := cmkpluginregistry.New(createContext(t), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
 	assert.NoError(t, err)
 
 	sessionManagerClient := sessionmanager.NewFakeSessionManagerClient()
@@ -1195,7 +1211,7 @@ func TestHandleTerminateTenant(t *testing.T) {
 			require.NoError(t, err)
 
 			go func() {
-				err = op.RunOperator(t.Context())
+				err = op.RunOperator(createContext(t))
 				assert.NoError(t, err)
 			}()
 
@@ -1456,7 +1472,7 @@ func newTestOperator(t *testing.T, opts ...testutils.TestDBConfigOpt) TestConfig
 		sessionmanager.NewMockService(sessionManagerClient),
 	)
 
-	svcRegistry, err := cmkpluginregistry.New(t.Context(), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
+	svcRegistry, err := cmkpluginregistry.New(createContext(t), cfg, cmkpluginregistry.WithBuiltInPlugins(ps))
 	assert.NoError(t, err)
 
 	tenantManager, groupManager := createManagers(t, multitenancyDB, cfg, svcRegistry)

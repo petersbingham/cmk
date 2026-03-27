@@ -8,9 +8,12 @@ const (
 	TenantAdminGroup   string = "TenantAdministrator"
 	TenantAuditorGroup string = "TenantAuditor"
 
-	KeyAdminRole      Role = "KEY_ADMINISTRATOR"
-	TenantAdminRole   Role = "TENANT_ADMINISTRATOR"
-	TenantAuditorRole Role = "TENANT_AUDITOR"
+	KeyAdminRole      BusinessRole = "KEY_ADMINISTRATOR"
+	TenantAdminRole   BusinessRole = "TENANT_ADMINISTRATOR"
+	TenantAuditorRole BusinessRole = "TENANT_AUDITOR"
+
+	InternalTenantProvisioningRole InternalRole = "INTERNAL_TENANT_PROVISIONING"
 )
 
-type Role string
+type BusinessRole string
+type InternalRole string
